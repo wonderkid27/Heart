@@ -278,6 +278,13 @@
           return { name: "disperse", k: (t - b - h) / d, t };
         }
 
+        function ensurePhase(phase, tMs) {
+          if (phase && typeof phase === "object" && typeof phase.name === "string") return phase;
+          const fallback = phaseAt(tMs);
+          if (fallback && typeof fallback === "object" && typeof fallback.name === "string") return fallback;
+          return { name: "hold", k: 0, t: 0 };
+        }
+
         function makeParticle(i) {
           return {
             i,
@@ -320,6 +327,7 @@
         resetCycle(0);
 
         function drawBase(g, tMs, phase, mode = "main") {
+          phase = ensurePhase(phase, tMs);
           const { baseCx, baseCy, scale } = state;
           const pulse = 1 + 0.06 * Math.sin(tMs * 0.0022);
           const r = scale * (mode === "bloom" ? 13.6 : 12.5) * pulse;
@@ -363,6 +371,7 @@
 
         function drawThreads(g, tMs, phase, mode = "main") {
           if (prefersReducedMotion) return;
+          phase = ensurePhase(phase, tMs);
           const { baseCx, baseCy, heartCx, heartCy, scale } = state;
 
           const intensity =
@@ -403,7 +412,8 @@
           g.restore();
         }
 
-        function backgroundFade(phase) {
+        function backgroundFade(phase, tMs) {
+          phase = ensurePhase(phase, tMs);
           ctx.globalCompositeOperation = "source-over";
           let a =
             phase.name === "build"
@@ -437,7 +447,7 @@
           }
 
           const tMs = now - startAt;
-          const ph = phaseAt(tMs);
+          const ph = ensurePhase(phaseAt(tMs), tMs);
           if (requestedReset) {
             resetCycle(tMs);
             requestedReset = false;
@@ -447,7 +457,7 @@
           }
           lastT = ph.t;
 
-          backgroundFade(ph);
+          backgroundFade(ph, tMs);
           bloomCtx.globalCompositeOperation = "source-over";
           const bloomFade = ph.name === "hold" ? 0.18 : ph.name === "build" ? 0.14 : 0.28;
           bloomCtx.fillStyle = `rgba(0,0,0,${bloomFade})`;
