@@ -153,7 +153,7 @@
           return points;
         }
 
-        const PARTICLE_COUNT = prefersReducedMotion ? 900 : 2600;
+        const PARTICLE_COUNT = prefersReducedMotion ? 900 : 3600;
         const HEART_POINTS = makeHeartPoints(PARTICLE_COUNT);
 
         const PHASE = {
@@ -305,9 +305,12 @@
 
         function resetCycle(tMs) {
           for (const p of particles) {
-            p.delay = Math.pow(rng(), 0.9) * 0.62;
+            p.delay = Math.pow(rng(), 1.25) * 0.74;
             p.reveal = 0;
             p.scatter = rng();
+            p.baseAngle = rng() * TAU;
+            p.baseRadius = rng();
+            p.wander = rng() * TAU;
             p.vx = 0;
             p.vy = 0;
             placeOnBase(p, tMs);
@@ -445,11 +448,22 @@
           lastT = ph.t;
 
           backgroundFade(ph);
-          drawBase(tMs, ph);
+          bloomCtx.globalCompositeOperation = "source-over";
+          const bloomFade = ph.name === "hold" ? 0.18 : ph.name === "build" ? 0.14 : 0.28;
+          bloomCtx.fillStyle = `rgba(0,0,0,${bloomFade})`;
+          bloomCtx.fillRect(0, 0, state.w, state.h);
+
+          drawBase(ctx, tMs, ph, "main");
+          drawThreads(ctx, tMs, ph, "main");
+          drawBase(bloomCtx, tMs, ph, "bloom");
+          drawThreads(bloomCtx, tMs, ph, "bloom");
 
           const { heartCx, heartCy, baseCx, baseCy, scale } = state;
           const pulse = 1 + 0.03 * Math.sin(tMs * 0.0027);
           const heartScale = scale * pulse;
+          const rot = tMs * 0.000085 + 0.08 * Math.sin(tMs * 0.0007);
+          const cr = Math.cos(rot);
+          const sr = Math.sin(rot);
 
           const pull =
             ph.name === "build" ? 0.018 : ph.name === "hold" ? 0.012 : lerp(0.01, 0.002, ph.k);
@@ -457,14 +471,18 @@
 
           ctx.save();
           ctx.globalCompositeOperation = "lighter";
+          bloomCtx.save();
+          bloomCtx.globalCompositeOperation = "lighter";
 
           for (const p of particles) {
             p.px = p.x;
             p.py = p.y;
 
             const pt = HEART_POINTS[p.i];
-            const targetHeartX = heartCx + pt.x * heartScale;
-            const targetHeartY = heartCy + pt.y * heartScale;
+            const hx = pt.x * cr - pt.y * sr;
+            const hy = pt.x * sr + pt.y * cr;
+            const targetHeartX = heartCx + hx * heartScale;
+            const targetHeartY = heartCy + hy * heartScale;
 
             let tx = targetHeartX;
             let ty = targetHeartY;
@@ -511,14 +529,30 @@
             if (alpha <= 0.001) continue;
 
             const speed = Math.hypot(p.x - p.px, p.y - p.py);
-            if (!prefersReducedMotion && speed > 2.3) {
-              const a = Math.min(0.45, alpha * (0.08 + speed * 0.022));
+            if (!prefersReducedMotion && speed > 1.15 && (p.scatter < 0.38 || speed > 2.4)) {
+              const len = Math.min(26, speed * 6.4);
+              const inv = 1 / (speed || 1);
+              const dx = (p.x - p.px) * inv;
+              const dy = (p.y - p.py) * inv;
+              const a = Math.min(0.55, alpha * (0.055 + speed * 0.018));
               ctx.strokeStyle = `rgba(170, 245, 255, ${a})`;
               ctx.lineWidth = 1;
               ctx.beginPath();
-              ctx.moveTo(p.px, p.py);
-              ctx.lineTo(p.x, p.y);
+              ctx.moveTo(p.x, p.y);
+              ctx.lineTo(p.x - dx * len, p.y - dy * len);
               ctx.stroke();
+
+              if (speed > 2.35) {
+                bloomCtx.strokeStyle = `rgba(150, 240, 255, ${Math.min(
+                  0.16,
+                  alpha * 0.07 * (speed - 1)
+                )})`;
+                bloomCtx.lineWidth = 2.8;
+                bloomCtx.beginPath();
+                bloomCtx.moveTo(p.x, p.y);
+                bloomCtx.lineTo(p.x - dx * len, p.y - dy * len);
+                bloomCtx.stroke();
+              }
             }
 
             const tw = 0.85 + 0.15 * Math.sin(tMs * 0.007 + p.twinkle);
@@ -528,9 +562,31 @@
 
             ctx.globalAlpha = Math.min(1, alpha);
             ctx.drawImage(sprite, p.x - s, p.y - s, s * 2, s * 2);
+
+            const bloomA =
+              ph.name === "hold" ? alpha * 0.7 : ph.name === "build" ? alpha * 0.55 : alpha * 0.45;
+            if (bloomA > 0.035) {
+              const hs = (spriteHot.width / 2) * drawSize * 0.62;
+              bloomCtx.globalAlpha = Math.min(1, bloomA);
+              bloomCtx.drawImage(spriteHot, p.x - hs, p.y - hs, hs * 2, hs * 2);
+            }
           }
 
+          bloomCtx.restore();
           ctx.restore();
+
+          ctx.save();
+          ctx.globalCompositeOperation = "screen";
+          if (!prefersReducedMotion) {
+            ctx.globalAlpha = BLOOM.intensity * 0.65;
+            ctx.filter = "blur(10px)";
+            ctx.drawImage(bloomCanvas, 0, 0, state.w, state.h);
+            ctx.filter = "none";
+          }
+          ctx.globalAlpha = BLOOM.intensity;
+          ctx.drawImage(bloomCanvas, 0, 0, state.w, state.h);
+          ctx.restore();
+
           requestAnimationFrame(step);
         }
 
