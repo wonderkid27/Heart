@@ -21,81 +21,16 @@
         width: 100vw;
         height: 100vh;
       }
-
-      #errBox {
-        position: fixed;
-        top: 18px;
-        left: 50%;
-        transform: translate(-50%, -10px);
-        width: min(560px, calc(100vw - 32px));
-        box-sizing: border-box;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(60, 0, 0, 0.62);
-        border: 1px solid rgba(255, 90, 90, 0.9);
-        border-left: 6px solid rgba(255, 60, 60, 1);
-        color: #fff;
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.65);
-        opacity: 0;
-        pointer-events: none;
-        z-index: 9999;
-        transition: opacity 180ms ease, transform 180ms ease;
-        backdrop-filter: blur(10px);
-      }
-      #errBox.show {
-        opacity: 1;
-        transform: translate(-50%, 0);
-        pointer-events: auto;
-      }
-      #errBox .row {
-        display: flex;
-        gap: 12px;
-        align-items: flex-start;
-      }
-      #errBox .icon {
-        width: 18px;
-        height: 18px;
-        margin-top: 2px;
-        flex: none;
-      }
-      #errBox .title {
-        font-weight: 700;
-        font-size: 14px;
-        line-height: 1.15;
-        margin: 0 0 4px 0;
-      }
-      #errBox .msg {
-        font-size: 13px;
-        line-height: 1.35;
-        opacity: 0.9;
-        margin: 0;
-      }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
-
-    <div id="errBox" role="alert" aria-live="assertive" aria-atomic="true">
-      <div class="row">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="currentColor" d="M11 7h2v7h-2V7zm0 9h2v2h-2v-2z" />
-          <path
-            fill="currentColor"
-            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"
-          />
-        </svg>
-        <div>
-          <div class="title">Lỗi</div>
-          <p class="msg">Không thể hoàn tất tạo hình trái tim.</p>
-        </div>
-      </div>
-    </div>
-
     <script>
       (() => {
         "use strict";
 
         const TAU = Math.PI * 2;
+        const FRAME_MS = 1000 / 60;
         const clamp01 = (v) => Math.max(0, Math.min(1, v));
         const lerp = (a, b, t) => a + (b - a) * t;
         const smoothstep = (a, b, t) => {
@@ -108,7 +43,6 @@
           window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
         const canvas = document.getElementById("c");
-        const errBox = document.getElementById("errBox");
         const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
 
         const bgCanvas = document.createElement("canvas");
@@ -140,13 +74,30 @@
           };
         }
 
-        const SEED = (Date.now() ^ ((Math.random() * 1e9) | 0)) >>> 0;
+        const getNumberParam = (key) => {
+          try {
+            const sp = new URLSearchParams(window.location.search);
+            const v = sp.get(key);
+            if (v == null || v === "") return null;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+          } catch {
+            return null;
+          }
+        };
+
+        const seedFromUrl = getNumberParam("seed");
+        const SEED =
+          seedFromUrl == null ? ((Date.now() ^ ((Math.random() * 1e9) | 0)) >>> 0) : (seedFromUrl >>> 0);
         const rng = mulberry32(SEED);
+
+        const FORCE_W = getNumberParam("w");
+        const FORCE_H = getNumberParam("h");
 
         // Tuned to match `heart.mp4`: black background + subtle bloom (avoid white blowout).
         const BLOOM = {
-          down: prefersReducedMotion ? 0.8 : 0.68,
-          intensity: prefersReducedMotion ? 0.22 : 0.32,
+          down: prefersReducedMotion ? 0.8 : 0.76,
+          intensity: prefersReducedMotion ? 0.18 : 0.26,
         };
 
         function makeGlowSprite(size, inner, mid, outer) {
@@ -168,16 +119,16 @@
         // Smaller / dimmer sprites keep particles visible (like the reference video)
         // instead of becoming a solid glowing blob.
         const spriteDot = makeGlowSprite(
-          28,
-          "rgba(255, 255, 255, 1)",
-          "rgba(160, 240, 255, 0.55)",
-          "rgba(0, 150, 220, 0)"
+          34,
+          "rgba(245, 255, 255, 1)",
+          "rgba(150, 240, 255, 0.66)",
+          "rgba(0, 165, 245, 0)"
         );
         const spriteHot = makeGlowSprite(
-          52,
+          64,
           "rgba(255, 255, 255, 1)",
-          "rgba(140, 235, 255, 0.55)",
-          "rgba(0, 140, 210, 0)"
+          "rgba(140, 235, 255, 0.72)",
+          "rgba(0, 155, 235, 0)"
         );
 
         function heartBoundary(t) {
@@ -204,42 +155,25 @@
           return points;
         }
 
-        const PARTICLE_COUNT = prefersReducedMotion ? 900 : 3600;
+        const PARTICLE_COUNT = prefersReducedMotion ? 1400 : 5000;
         const HEART_POINTS = makeHeartPoints(PARTICLE_COUNT);
 
-        // Match the reference clip duration (~20.6s) and pacing.
+        // Timeline tuned to match `heart.mp4` (~20.6s).
         const PHASE = {
-          cycleMs: prefersReducedMotion ? 14000 : 20600,
-          buildMs: prefersReducedMotion ? 3400 : 6000,
-          holdMs: prefersReducedMotion ? 6200 : 9800,
-          disperseMs: prefersReducedMotion ? 4400 : 4800,
+          introMs: prefersReducedMotion ? 700 : 500, // faint heart
+          cloudMs: prefersReducedMotion ? 1900 : 2500, // mushroom / rain
+          reformMs: prefersReducedMotion ? 700 : 700, // heart returns + base appears
+          rampMs: prefersReducedMotion ? 3200 : 4800, // brightening heart
+          surgeMs: prefersReducedMotion ? 4200 : 6500, // energetic streaks/threads
+          stableMs: prefersReducedMotion ? 4000 : 5600, // stable heart
         };
-
-
-        const ERR_TOAST = {
-          triggerK: 0.6,
-        };
-
-        let halted = false;
-
-        function setErrorVisible(v) {
-          if (!errBox) return;
-          errBox.classList.toggle("show", v);
-        }
-
-        function haltAll() {
-          if (halted) return;
-          halted = true;
-          setErrorVisible(true);
-        }
-
-        function updateErrorToast(tMs, ph) {
-          if (halted) return;
-          if (ph.name === "build" && ph.k >= ERR_TOAST.triggerK) {
-            haltAll();
-          }
-        }
-
+        PHASE.cycleMs =
+          PHASE.introMs +
+          PHASE.cloudMs +
+          PHASE.reformMs +
+          PHASE.rampMs +
+          PHASE.surgeMs +
+          PHASE.stableMs;
 
         function rebuildBackground() {
           const { w, h } = state;
@@ -253,8 +187,8 @@
 
         function computeLayout() {
           const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
-          const w = Math.max(1, Math.floor(window.innerWidth));
-          const h = Math.max(1, Math.floor(window.innerHeight));
+          const w = Math.max(1, Math.floor(FORCE_W != null ? FORCE_W : window.innerWidth));
+          const h = Math.max(1, Math.floor(FORCE_H != null ? FORCE_H : window.innerHeight));
           canvas.width = Math.floor(w * dpr);
           canvas.height = Math.floor(h * dpr);
           canvas.style.width = w + "px";
@@ -264,13 +198,13 @@
           state.w = w;
           state.h = h;
           state.dpr = dpr;
-          state.scale = Math.min(w, h) / 58;
+          state.scale = Math.min(w, h) / 55;
           state.heartCx = w * 0.5;
-          // Place the heart higher (closer to the reference video framing).
-          state.heartCy = h * 0.26;
+          // Reference framing: heart sits above the base, base near the bottom.
+          state.heartCy = h * 0.44;
           state.baseCx = state.heartCx;
           // Energy base sits lower in the reference.
-          state.baseCy = h * 0.88;
+          state.baseCy = h * 0.87;
 
           bloomCanvas.width = Math.max(1, Math.floor(w * BLOOM.down));
           bloomCanvas.height = Math.max(1, Math.floor(h * BLOOM.down));
@@ -285,10 +219,7 @@
           requestedReset = true;
         }
 
-        window.addEventListener("resize", () => {
-          if (halted) return;
-          computeLayout();
-        }, { passive: true });
+        window.addEventListener("resize", computeLayout, { passive: true });
         computeLayout();
 
         function placeOnBase(p, tMs) {
@@ -304,42 +235,110 @@
           p.vy = 0;
         }
 
+        function groundTarget(p, tMs) {
+          const { baseCx, baseCy, scale, w } = state;
+          const spreadX = w * 0.42;
+          const y0 = baseCy - scale * 5.0;
+          const wob = Math.sin(tMs * 0.0012 + p.wander) * scale * 0.35;
+          const x = baseCx + p.groundX * spreadX + wob;
+          const y = y0 + (p.groundY - 0.5) * scale * 2.2 + Math.cos(tMs * 0.001 + p.twinkle) * 0.4;
+          return { x, y };
+        }
+
+        function placeOnGround(p, tMs) {
+          const g = groundTarget(p, tMs);
+          p.x = g.x;
+          p.y = g.y;
+          p.px = p.x;
+          p.py = p.y;
+          p.vx = 0;
+          p.vy = 0;
+        }
+
+        function cloudTarget(p) {
+          const { baseCx, baseCy, scale, w, h } = state;
+          const capCx = baseCx;
+          const capCy = h * 0.18;
+          const capRx = w * 0.22;
+          const capRy = h * 0.20;
+          const groundY = baseCy - scale * 5.0;
+
+          // Some particles form a rain-like column down to the base.
+          if (p.cloudRole < 0.28) {
+            const x = baseCx + p.cloudX * scale * 7.0;
+            const y = lerp(capCy + capRy * 0.25, groundY, p.cloudY);
+            return { x, y };
+          }
+
+          const x = capCx + p.cloudX * capRx;
+          const y = capCy + (p.cloudY - 0.5) * capRy * 2.0;
+          return { x, y };
+        }
+
+        function phaseGain(phase) {
+          switch (phase.name) {
+            case "intro":
+              return 0.5;
+            case "cloud":
+              return lerp(0.7, 1.0, smoothstep(0, 1, phase.k));
+            case "reform":
+              return lerp(0.8, 0.95, smoothstep(0, 1, phase.k));
+            case "ramp":
+              return lerp(0.9, 1.25, smoothstep(0, 1, phase.k));
+            case "surge":
+              return 1.45;
+            case "stable":
+              return lerp(1.2, 1.0, smoothstep(0, 1, phase.k));
+            default:
+              return 0.8;
+          }
+        }
+
         function particleColorAlpha(p, tMs, phase) {
+          phase = ensurePhase(phase, tMs);
           const tw = 0.7 + 0.3 * Math.sin(tMs * 0.006 + p.twinkle);
-          const base = p.brightness * tw;
-          if (phase.name === "build") return base * smoothstep(0, 1, phase.k) * p.reveal;
-          if (phase.name === "hold") return base;
-          return base * (1 - phase.k);
+          let gain = phaseGain(phase);
+          if (p.role === "ground") gain *= 0.9;
+          return p.brightness * tw * gain;
         }
 
         function phaseAt(tMs) {
-          const t = tMs % PHASE.cycleMs;
-          const b = PHASE.buildMs;
-          const h = PHASE.holdMs;
-          const d = PHASE.disperseMs;
-          if (t < b) return { name: "build", k: t / b, t };
-          if (t < b + h) return { name: "hold", k: (t - b) / h, t };
-          return { name: "disperse", k: (t - b - h) / d, t };
+          const t = ((tMs % PHASE.cycleMs) + PHASE.cycleMs) % PHASE.cycleMs;
+          const t1 = PHASE.introMs;
+          const t2 = t1 + PHASE.cloudMs;
+          const t3 = t2 + PHASE.reformMs;
+          const t4 = t3 + PHASE.rampMs;
+          const t5 = t4 + PHASE.surgeMs;
+          if (t < t1) return { name: "intro", k: t / PHASE.introMs, t };
+          if (t < t2) return { name: "cloud", k: (t - t1) / PHASE.cloudMs, t };
+          if (t < t3) return { name: "reform", k: (t - t2) / PHASE.reformMs, t };
+          if (t < t4) return { name: "ramp", k: (t - t3) / PHASE.rampMs, t };
+          if (t < t5) return { name: "surge", k: (t - t4) / PHASE.surgeMs, t };
+          return { name: "stable", k: (t - t5) / PHASE.stableMs, t };
         }
 
         function ensurePhase(phase, tMs) {
           if (phase && typeof phase === "object" && typeof phase.name === "string") return phase;
           const fallback = phaseAt(tMs);
           if (fallback && typeof fallback === "object" && typeof fallback.name === "string") return fallback;
-          return { name: "hold", k: 0, t: 0 };
+          return { name: "stable", k: 0, t: 0 };
         }
 
         function makeParticle(i) {
+          const role = rng() < 0.3 ? "ground" : "heart";
+          const cloudX = (rng() + rng() + rng() + rng() - 2) * 0.85; // ~normal-ish
+          const cloudY = (rng() + rng()) * 0.5; // peaked around 0.5
           return {
             i,
+            role,
             x: 0,
             y: 0,
             px: 0,
             py: 0,
             vx: 0,
             vy: 0,
-            size: 0.45 + rng() * 0.95,
-            brightness: 0.32 + rng() * 0.6,
+            size: 0.5 + rng() * 0.9,
+            brightness: 0.1 + rng() * 0.26,
             twinkle: rng() * TAU,
             baseAngle: rng() * TAU,
             baseRadius: rng(),
@@ -348,36 +347,82 @@
             reveal: 0,
             scatter: rng(),
             wander: rng() * TAU,
+            cloudRole: rng(),
+            cloudX,
+            cloudY,
+            groundX: rng() * 2 - 1,
+            groundY: rng(),
+            spark: rng(),
           };
         }
 
         const particles = new Array(PARTICLE_COUNT);
         for (let i = 0; i < particles.length; i++) particles[i] = makeParticle(i);
 
+        function heartRotation(tMs) {
+          // Subtle wobble like the reference (avoid continuous spinning).
+          return 0.03 * Math.sin(tMs * 0.0007);
+        }
+
+        function placeOnHeart(p, tMs) {
+          const { heartCx, heartCy, scale } = state;
+          const pulse = 1 + 0.03 * Math.sin(tMs * 0.0027);
+          const heartScale = scale * pulse;
+          const rot = heartRotation(tMs);
+          const cr = Math.cos(rot);
+          const sr = Math.sin(rot);
+          const pt = HEART_POINTS[p.i];
+          const hx = pt.x * cr - pt.y * sr;
+          const hy = pt.x * sr + pt.y * cr;
+          p.x = heartCx + hx * heartScale;
+          p.y = heartCy + hy * heartScale;
+          p.px = p.x;
+          p.py = p.y;
+          p.vx = 0;
+          p.vy = 0;
+        }
+
         function resetCycle(tMs) {
           for (const p of particles) {
             p.delay = Math.pow(rng(), 1.25) * 0.74;
-            p.reveal = 0;
+            p.reveal = 1;
             p.scatter = rng();
             p.baseAngle = rng() * TAU;
             p.baseRadius = rng();
             p.wander = rng() * TAU;
             p.vx = 0;
             p.vy = 0;
-            placeOnBase(p, tMs);
+            if (p.role === "ground") placeOnGround(p, tMs);
+            else placeOnHeart(p, tMs);
           }
         }
-
-        resetCycle(0);
 
         function drawBase(g, tMs, phase, mode = "main") {
           phase = ensurePhase(phase, tMs);
           const { baseCx, baseCy, scale } = state;
-          const pulse = 1 + 0.06 * Math.sin(tMs * 0.0022);
-          const r = scale * (mode === "bloom" ? 12.2 : 11.1) * pulse;
+          const pulse = 1 + 0.07 * Math.sin(tMs * 0.0022);
+          const r = scale * (mode === "bloom" ? 10.8 : 9.9) * pulse;
 
-          const intensity = phase.name === "disperse" ? 1 - phase.k * 0.65 : 1;
-          const gain = mode === "bloom" ? 1.25 : 1;
+          const vis = (() => {
+            switch (phase.name) {
+              case "intro":
+                return 0;
+              case "cloud":
+                return lerp(0.18, 0.45, smoothstep(0, 1, phase.k));
+              case "reform":
+                return lerp(0.12, 0.8, smoothstep(0.2, 1, phase.k));
+              case "ramp":
+                return lerp(0.85, 1.05, smoothstep(0, 1, phase.k));
+              case "surge":
+                return 1.2;
+              case "stable":
+                return lerp(1.0, 0.85, smoothstep(0, 1, phase.k));
+              default:
+                return 0.7;
+            }
+          })();
+          const gain = mode === "bloom" ? 1.15 : 1;
+          if (vis <= 0.001) return;
 
           g.save();
           g.globalCompositeOperation = "lighter";
@@ -386,9 +431,9 @@
           g.translate(baseCx, baseCy);
           g.scale(2.35, 0.75);
           const grad = g.createRadialGradient(0, 0, 0, 0, 0, r);
-          grad.addColorStop(0, `rgba(210, 255, 255, ${0.55 * intensity * gain})`);
-          grad.addColorStop(0.24, `rgba(130, 242, 255, ${0.26 * intensity * gain})`);
-          grad.addColorStop(0.78, `rgba(40, 200, 255, ${0.08 * intensity * gain})`);
+          grad.addColorStop(0, `rgba(210, 255, 255, ${0.4 * vis * gain})`);
+          grad.addColorStop(0.24, `rgba(120, 235, 255, ${0.18 * vis * gain})`);
+          grad.addColorStop(0.72, `rgba(40, 200, 255, ${0.06 * vis * gain})`);
           grad.addColorStop(1, "rgba(0, 0, 0, 0)");
           g.fillStyle = grad;
           g.beginPath();
@@ -396,17 +441,25 @@
           g.fill();
           g.restore();
 
-          const ringCount = prefersReducedMotion ? 8 : mode === "bloom" ? 10 : 18;
-          const ringAlpha = (mode === "bloom" ? 0.06 : 0.05) * (1 - phase.k * 0.35);
+          const sweepAlpha = (mode === "bloom" ? 0.14 : 0.1) * vis;
+          const sweep = tMs * 0.0013;
+          g.strokeStyle = `rgba(200, 255, 255, ${sweepAlpha})`;
+          g.lineWidth = mode === "bloom" ? 2.5 : 1.7;
+          g.beginPath();
+          g.ellipse(baseCx, baseCy, r * 2.1, r * 0.64, 0, sweep, sweep + 2.1);
+          g.stroke();
+
+          const ringCount = prefersReducedMotion ? 6 : mode === "bloom" ? 10 : 16;
+          const ringAlpha = (mode === "bloom" ? 0.065 : 0.05) * vis;
           g.lineCap = "round";
           for (let i = 0; i < ringCount; i++) {
             const a0 = tMs * 0.00125 + (i / ringCount) * TAU;
-            const a1 = a0 + (0.35 + 0.45 * Math.sin(tMs * 0.0015 + i)) * 0.92;
-            const rr = r * (1.12 + 0.24 * Math.sin(i * 9.2 + tMs * 0.001));
+            const a1 = a0 + (0.35 + 0.45 * Math.sin(tMs * 0.0015 + i)) * 0.98;
+            const rr = r * (1.06 + 0.24 * Math.sin(i * 9.2 + tMs * 0.001));
             g.strokeStyle = `rgba(160, 245, 255, ${ringAlpha})`;
-            g.lineWidth = mode === "bloom" ? 1.8 : 1.0;
+            g.lineWidth = mode === "bloom" ? 2.1 : 1.2;
             g.beginPath();
-            g.ellipse(baseCx, baseCy, rr * 2.1, rr * 0.62, 0, a0, a1);
+            g.ellipse(baseCx, baseCy, rr * 2.1, rr * 0.64, 0, a0, a1);
             g.stroke();
           }
 
@@ -418,17 +471,23 @@
           phase = ensurePhase(phase, tMs);
           const { baseCx, baseCy, heartCx, heartCy, scale } = state;
 
-          const intensity =
-            phase.name === "build"
-              ? smoothstep(0.08, 1, phase.k)
-              : phase.name === "hold"
-              ? 0.55
-              : (1 - phase.k) * 0.42;
+          const intensity = (() => {
+            switch (phase.name) {
+              case "surge":
+                return 1.1;
+              case "ramp":
+                return lerp(0.2, 0.5, smoothstep(0.25, 1, phase.k));
+              case "stable":
+                return lerp(0.55, 0.3, smoothstep(0, 1, phase.k));
+              default:
+                return 0;
+            }
+          })();
           if (intensity <= 0.001) return;
 
-          const count = mode === "bloom" ? 8 : 12;
-          const rx = scale * 22;
-          const ry = scale * 6.7;
+          const count = mode === "bloom" ? 10 : 15;
+          const rx = scale * 24;
+          const ry = scale * 7.5;
 
           g.save();
           g.globalCompositeOperation = "lighter";
@@ -445,9 +504,9 @@
             const cxp = (sx + ex) * 0.5 + wob;
             const cyp = (sy + ey) * 0.5 - lift;
             const flick = 0.45 + 0.55 * Math.sin(i * 12.3 + tMs * 0.003);
-            const aLine = (mode === "bloom" ? 0.045 : 0.03) * intensity * (0.55 + 0.45 * flick);
+            const aLine = (mode === "bloom" ? 0.07 : 0.05) * intensity * (0.6 + 0.4 * flick);
             g.strokeStyle = `rgba(180, 250, 255, ${aLine})`;
-            g.lineWidth = mode === "bloom" ? 2.1 : 1.0;
+            g.lineWidth = mode === "bloom" ? 2.6 : 1.3;
             g.beginPath();
             g.moveTo(sx, sy);
             g.quadraticCurveTo(cxp, cyp, ex, ey);
@@ -459,80 +518,153 @@
         function backgroundFade(phase, tMs) {
           phase = ensurePhase(phase, tMs);
           ctx.globalCompositeOperation = "source-over";
-          let a =
-            phase.name === "build"
-              ? lerp(0.28, 0.18, phase.k)
-              : phase.name === "hold"
-              ? 0.16
-              : lerp(0.16, 0.28, phase.k);
-          if (phase.name === "disperse") a += smoothstep(0.72, 1, phase.k) * 0.18;
+          const a = (() => {
+            switch (phase.name) {
+              case "intro":
+                return lerp(0.32, 0.26, smoothstep(0, 1, phase.k));
+              case "cloud":
+                return lerp(0.24, 0.18, smoothstep(0, 1, phase.k));
+              case "reform":
+                return lerp(0.22, 0.26, smoothstep(0, 1, phase.k));
+              case "ramp":
+                return lerp(0.22, 0.18, smoothstep(0, 1, phase.k));
+              case "surge":
+                return 0.14;
+              case "stable":
+                return lerp(0.2, 0.24, smoothstep(0, 1, phase.k));
+              default:
+                return 0.22;
+            }
+          })();
           ctx.globalAlpha = a;
           ctx.drawImage(bgCanvas, 0, 0, state.w, state.h);
           ctx.globalAlpha = 1;
         }
 
         let lastT = 0;
+        let lastNow = null;
         let paused = false;
         let pauseAt = 0;
-        let startAt = performance.now();
-        let rafId = 0;
+        let lastPhaseName = "";
+        let warmedUp = false;
+        const STILL_FRAME = (() => {
+          const v = getNumberParam("still");
+          return v != null && v !== 0;
+        })();
+
+        const START_OFFSET_MS = (() => {
+          const parseMs = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.max(0, n) : 0;
+          };
+          const fromQuery = getNumberParam("t");
+          if (fromQuery != null) return parseMs(fromQuery);
+          const m = /t=(\d+)/.exec(window.location.hash || "");
+          if (m) return parseMs(m[1]);
+          return 0;
+        })();
+
+        let startAt = null;
 
         window.addEventListener("keydown", (e) => {
-          if (halted) return;
           if (e.code !== "Space") return;
           e.preventDefault();
+          const now = performance.now();
+          if (startAt == null) startAt = now - START_OFFSET_MS;
           paused = !paused;
-          if (paused) pauseAt = performance.now();
-          else startAt += performance.now() - pauseAt;
+          if (paused) pauseAt = now;
+          else {
+            startAt += now - pauseAt;
+            lastNow = now;
+          }
         });
 
-        function step(now) {
-          if (halted) return;
-          if (paused) {
-            rafId = requestAnimationFrame(step);
-            return;
+        function clampDtFrames(dt) {
+          if (!Number.isFinite(dt)) return 1;
+          return Math.max(0, Math.min(2.5, dt));
+        }
+
+        function phaseEnterImpulse(ph) {
+          if (ph.name === "cloud") {
+            for (const p of particles) {
+              if (p.role !== "heart") continue;
+              p.vx += (p.cloudX * 0.6 + (p.scatter - 0.5) * 0.4) * 2.4;
+              p.vy -= (1.6 + p.baseRadius * 1.8) * 2.6;
+            }
+          } else if (ph.name === "surge") {
+            for (const p of particles) {
+              if (p.role !== "heart") continue;
+              p.vx += Math.sin(p.wander) * (0.8 + p.scatter) * 2.0;
+              p.vy -= (0.8 + p.baseRadius) * 2.0;
+            }
+          }
+        }
+
+        function advanceParticles(tMs, dtFrames, ph, draw) {
+          const dt = clampDtFrames(dtFrames);
+
+          if (ph.name !== lastPhaseName) {
+            phaseEnterImpulse(ph);
+            lastPhaseName = ph.name;
           }
 
-          const tMs = now - startAt;
-          const ph = ensurePhase(phaseAt(tMs), tMs);
-          if (requestedReset) {
-            resetCycle(tMs);
-            requestedReset = false;
-            lastT = ph.t;
-          } else if (ph.t < lastT) {
-            resetCycle(tMs);
-          }
-          lastT = ph.t;
+          const pull = (() => {
+            switch (ph.name) {
+              case "intro":
+                return 0.02;
+              case "cloud":
+                return 0.012;
+              case "reform":
+                return lerp(0.022, 0.032, smoothstep(0, 1, ph.k));
+              case "ramp":
+                return 0.022;
+              case "surge":
+                return lerp(0.012, 0.009, smoothstep(0, 1, ph.k));
+              case "stable":
+                return 0.02;
+              default:
+                return 0.018;
+            }
+          })();
 
-          updateErrorToast(tMs, ph);
-          if (halted) return;
+          const drag = (() => {
+            switch (ph.name) {
+              case "cloud":
+                return 0.9;
+              case "surge":
+                return 0.9;
+              default:
+                return 0.86;
+            }
+          })();
+          const dragPow = Math.pow(drag, dt);
 
-          backgroundFade(ph, tMs);
-          bloomCtx.globalCompositeOperation = "source-over";
-          const bloomFade = ph.name === "hold" ? 0.36 : ph.name === "build" ? 0.32 : 0.42;
-          bloomCtx.fillStyle = `rgba(0,0,0,${bloomFade})`;
-          bloomCtx.fillRect(0, 0, state.w, state.h);
-
-          drawBase(ctx, tMs, ph, "main");
-          drawThreads(ctx, tMs, ph, "main");
-          drawBase(bloomCtx, tMs, ph, "bloom");
-          drawThreads(bloomCtx, tMs, ph, "bloom");
+          const streakCfg = (() => {
+            switch (ph.name) {
+              case "surge":
+                return { minSpeed: 0.8, lenMul: 20, maxLen: 150, alphaMul: 1.45 };
+              case "cloud":
+                return { minSpeed: 1.0, lenMul: 17, maxLen: 120, alphaMul: 1.25 };
+              default:
+                return { minSpeed: 1.25, lenMul: 15, maxLen: 95, alphaMul: 1.1 };
+            }
+          })();
 
           const { heartCx, heartCy, baseCx, baseCy, scale } = state;
           const pulse = 1 + 0.03 * Math.sin(tMs * 0.0027);
           const heartScale = scale * pulse;
-          const rot = tMs * 0.000085 + 0.08 * Math.sin(tMs * 0.0007);
+          const rot = heartRotation(tMs);
           const cr = Math.cos(rot);
           const sr = Math.sin(rot);
 
-          const pull =
-            ph.name === "build" ? 0.018 : ph.name === "hold" ? 0.012 : lerp(0.01, 0.002, ph.k);
-          const drag = ph.name === "disperse" ? lerp(0.88, 0.96, ph.k) : 0.86;
+          if (draw) {
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            bloomCtx.save();
+            bloomCtx.globalCompositeOperation = "lighter";
+          }
 
-          ctx.save();
-          ctx.globalCompositeOperation = "lighter";
-          bloomCtx.save();
-          bloomCtx.globalCompositeOperation = "lighter";
+          const invDt = 1 / Math.max(0.0001, dt);
 
           for (const p of particles) {
             p.px = p.x;
@@ -547,67 +679,97 @@
             let tx = targetHeartX;
             let ty = targetHeartY;
 
-            if (ph.name === "build") {
-              const emit = smoothstep(0, 1, (ph.k - p.delay) / 0.35);
-              p.reveal = emit;
-
-              if (emit < 0.02) {
-                const ring = scale * 10.5;
-                const a = p.baseAngle + tMs * (0.0019 + p.spin * 0.001);
-                const r = ring * (0.25 + 0.85 * p.baseRadius);
-                tx = baseCx + Math.cos(a) * r * 2.1;
-                ty = baseCy + Math.sin(a) * r * 0.58;
-              } else {
-                const jet = 1 - smoothstep(0, 1, (ph.k - p.delay) / 0.22);
-                p.vy -= jet * (0.75 + p.baseRadius * 0.8);
-                p.vx += Math.sin(p.wander + tMs * 0.004) * jet * 0.35;
-              }
-            } else if (ph.name === "disperse") {
+            if (p.role === "ground") {
+              const g = groundTarget(p, tMs);
+              tx = g.x;
+              ty = g.y;
+            } else if (ph.name === "cloud") {
               const k = ph.k;
-              const spread = 1 + 1.7 * k * k;
-              tx = heartCx + (targetHeartX - heartCx) * spread;
-              ty = heartCy + (targetHeartY - heartCy) * spread + 55 * k;
-              const swirl = (0.006 + 0.012 * (1 - k)) * (p.baseRadius - 0.5);
+              const cloud = cloudTarget(p);
+              const mix = smoothstep(0, 0.22, k);
+              tx = lerp(targetHeartX, cloud.x, mix);
+              ty = lerp(targetHeartY, cloud.y, mix);
+
+              const swirl = (0.004 + 0.012 * (1 - k)) * (p.baseRadius - 0.5);
               const dx = p.x - heartCx;
-              const dy = p.y - (heartCy + scale * 6);
-              p.vx += -dy * swirl;
-              p.vy += dx * swirl;
-              p.vy += lerp(-0.14, 0.24, p.scatter) * (0.85 - 0.55 * k);
-              p.vy += 0.02 + 0.18 * k;
+              const dy = p.y - (heartCy + scale * 3);
+              p.vx += -dy * swirl * dt;
+              p.vy += dx * swirl * dt;
+
+              const lift = (1 - smoothstep(0.15, 1, k)) * (0.24 + 0.26 * (1 - p.cloudY));
+              p.vy -= lift * (0.9 + p.baseRadius * 0.8) * dt;
+              p.vx += Math.sin(p.wander + tMs * 0.003) * lift * 0.55 * dt;
+              p.vy += (0.06 + 0.12 * k) * dt; // rain/gravity
+            } else if (ph.name === "reform") {
+              const k = ph.k;
+              const cloud = cloudTarget(p);
+              const mix = 1 - smoothstep(0, 0.7, k);
+              tx = lerp(targetHeartX, cloud.x, mix);
+              ty = lerp(targetHeartY, cloud.y, mix);
+              p.vy += 0.04 * dt;
+            } else if (ph.name === "surge") {
+              const k = ph.k;
+              const swell = 1 + 0.12 * Math.sin(tMs * 0.0014) * (0.6 + 0.4 * (1 - k));
+              tx = heartCx + (targetHeartX - heartCx) * swell;
+              ty = heartCy + (targetHeartY - heartCy) * swell;
+
+              const swirl = (0.01 + 0.016 * (1 - k)) * (p.baseRadius - 0.5);
+              const dx = p.x - heartCx;
+              const dy = p.y - (heartCy + scale * 4);
+              p.vx += -dy * swirl * dt;
+              p.vy += dx * swirl * dt;
+
+              const burst = smoothstep(0.86, 1, Math.sin(tMs * 0.006 + p.wander * 1.7));
+              const jet = burst * (0.2 + 0.8 * (1 - k)) * (p.spark < 0.18 ? 1 : 0.35);
+              p.vy -= jet * (1.2 + p.baseRadius * 1.6) * dt;
+              p.vx += Math.cos(p.wander + tMs * 0.002) * jet * 0.9 * dt;
+              p.vy += (0.05 + 0.08 * k) * dt;
             }
 
             const ax = (tx - p.x) * pull;
             const ay = (ty - p.y) * pull;
-            p.vx += ax;
-            p.vy += ay;
-            p.vx *= drag;
-            p.vy *= drag;
-            p.x += p.vx;
-            p.y += p.vy;
+            p.vx += ax * dt;
+            p.vy += ay * dt;
+            p.vx *= dragPow;
+            p.vy *= dragPow;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+
+            if (!draw) continue;
 
             const alpha = particleColorAlpha(p, tMs, ph);
             if (alpha <= 0.001) continue;
 
-            const speed = Math.hypot(p.x - p.px, p.y - p.py);
-            if (!prefersReducedMotion && speed > 1.15 && (p.scatter < 0.38 || speed > 2.35)) {
-              const len = Math.min(86, speed * 14);
-              const inv = 1 / (speed || 1);
-              const dx = (p.x - p.px) * inv;
-              const dy = (p.y - p.py) * inv;
-              const a = Math.min(0.35, alpha * (0.04 + speed * 0.012));
+            const isGround = p.role === "ground";
+            const stepDx = p.x - p.px;
+            const stepDy = p.y - p.py;
+            const dist = Math.hypot(stepDx, stepDy);
+            const speed = dist * invDt;
+
+            if (
+              !prefersReducedMotion &&
+              !isGround &&
+              speed > streakCfg.minSpeed &&
+              (p.scatter < 0.44 || speed > streakCfg.minSpeed * 1.8)
+            ) {
+              const len = Math.min(streakCfg.maxLen, speed * streakCfg.lenMul);
+              const inv = 1 / (dist || 1);
+              const dx = stepDx * inv;
+              const dy = stepDy * inv;
+              const a = Math.min(0.45, alpha * streakCfg.alphaMul * (0.05 + speed * 0.013));
               ctx.strokeStyle = `rgba(170, 245, 255, ${a})`;
-              ctx.lineWidth = 1;
+              ctx.lineWidth = 1.3;
               ctx.beginPath();
               ctx.moveTo(p.x, p.y);
               ctx.lineTo(p.x - dx * len, p.y - dy * len);
               ctx.stroke();
 
-              if (speed > 2.2) {
+              if (speed > 2.2 && ph.name === "surge") {
                 bloomCtx.strokeStyle = `rgba(150, 240, 255, ${Math.min(
-                  0.12,
-                  alpha * 0.05 * (speed - 1)
+                  0.16,
+                  alpha * 0.085 * (speed - 0.8)
                 )})`;
-                bloomCtx.lineWidth = 2.4;
+                bloomCtx.lineWidth = 2.8;
                 bloomCtx.beginPath();
                 bloomCtx.moveTo(p.x, p.y);
                 bloomCtx.lineTo(p.x - dx * len, p.y - dy * len);
@@ -616,30 +778,124 @@
             }
 
             const tw = 0.85 + 0.15 * Math.sin(tMs * 0.007 + p.twinkle);
-            const drawSize = p.size * (0.9 + 0.35 * tw);
-            const sprite = ph.name === "build" && p.reveal < 0.55 ? spriteDot : spriteHot;
-            const s = (sprite.width / 2) * drawSize * 0.16;
+            const drawSize = p.size * (0.9 + 0.35 * tw) * (isGround ? 0.82 : 1);
+            const sprite = isGround ? spriteDot : alpha > 0.11 ? spriteHot : spriteDot;
+            const s = (sprite.width / 2) * drawSize * 0.18;
 
-            ctx.globalAlpha = Math.min(1, alpha * 0.75);
+            ctx.globalAlpha = Math.min(1, alpha * (isGround ? 0.98 : 0.9));
             ctx.drawImage(sprite, p.x - s, p.y - s, s * 2, s * 2);
 
-            const bloomA =
-              ph.name === "hold" ? alpha * 0.5 : ph.name === "build" ? alpha * 0.4 : alpha * 0.34;
-            if (bloomA > 0.03) {
-              const hs = (spriteHot.width / 2) * drawSize * 0.28;
-              bloomCtx.globalAlpha = Math.min(1, bloomA);
-              bloomCtx.drawImage(spriteHot, p.x - hs, p.y - hs, hs * 2, hs * 2);
+            if (!isGround) {
+              const bloomA =
+                ph.name === "surge"
+                  ? alpha * 0.65
+                  : ph.name === "ramp"
+                  ? alpha * 0.5
+                  : ph.name === "stable"
+                  ? alpha * 0.46
+                  : alpha * 0.34;
+              if (bloomA > 0.03) {
+                const hs = (spriteHot.width / 2) * drawSize * 0.27;
+                bloomCtx.globalAlpha = Math.min(1, bloomA);
+                bloomCtx.drawImage(spriteHot, p.x - hs, p.y - hs, hs * 2, hs * 2);
+              }
             }
           }
 
-          bloomCtx.restore();
-          ctx.restore();
+          if (draw) {
+            bloomCtx.restore();
+            ctx.restore();
+          }
+        }
+
+        function warmupTo(targetMs) {
+          const tTarget = Math.max(0, Math.min(targetMs, PHASE.cycleMs * 3));
+          requestedReset = false;
+          lastPhaseName = "";
+          lastT = 0;
+          resetCycle(0);
+
+          let t = 0;
+          while (t < tTarget) {
+            const next = Math.min(tTarget, t + FRAME_MS);
+            const dt = (next - t) / FRAME_MS;
+            const ph = ensurePhase(phaseAt(next), next);
+            if (ph.t < lastT) {
+              resetCycle(next);
+              lastPhaseName = "";
+            }
+            advanceParticles(next, dt, ph, false);
+            lastT = ph.t;
+            t = next;
+          }
+        }
+
+        function step(now) {
+          if (startAt == null) startAt = now - START_OFFSET_MS;
+          if (paused) {
+            if (!STILL_FRAME) requestAnimationFrame(step);
+            return;
+          }
+
+          const tMs = now - startAt;
+          const ph = ensurePhase(phaseAt(tMs), tMs);
+          window.__heartDebug = { tMs, phase: ph.name, k: ph.k, seed: SEED };
+
+          if (!warmedUp) {
+            warmedUp = true;
+            if (START_OFFSET_MS > 0) {
+              warmupTo(START_OFFSET_MS);
+              lastNow = now;
+            }
+          }
+
+          const dtFrames =
+            lastNow == null ? (START_OFFSET_MS > 0 ? 0 : 1) : (now - lastNow) / FRAME_MS;
+          lastNow = now;
+          if (requestedReset) {
+            resetCycle(tMs);
+            requestedReset = false;
+            lastT = ph.t;
+          } else if (ph.t < lastT) {
+            resetCycle(tMs);
+          }
+          lastT = ph.t;
+
+          backgroundFade(ph, tMs);
+          bloomCtx.globalCompositeOperation = "source-over";
+          const bloomFade = (() => {
+            switch (ph.name) {
+              case "intro":
+                return 0.4;
+              case "cloud":
+                return 0.32;
+              case "reform":
+                return 0.3;
+              case "ramp":
+                return 0.28;
+              case "surge":
+                return 0.24;
+              case "stable":
+                return 0.28;
+              default:
+                return 0.3;
+            }
+          })();
+          bloomCtx.fillStyle = `rgba(0,0,0,${bloomFade})`;
+          bloomCtx.fillRect(0, 0, state.w, state.h);
+
+          drawBase(ctx, tMs, ph, "main");
+          drawThreads(ctx, tMs, ph, "main");
+          drawBase(bloomCtx, tMs, ph, "bloom");
+          drawThreads(bloomCtx, tMs, ph, "bloom");
+
+          advanceParticles(tMs, dtFrames, ph, true);
 
           ctx.save();
           ctx.globalCompositeOperation = "screen";
           if (!prefersReducedMotion) {
-            ctx.globalAlpha = BLOOM.intensity * 0.55;
-            ctx.filter = "blur(7px)";
+            ctx.globalAlpha = BLOOM.intensity * 0.65;
+            ctx.filter = "blur(8px)";
             ctx.drawImage(bloomCanvas, 0, 0, state.w, state.h);
             ctx.filter = "none";
           }
@@ -647,12 +903,12 @@
           ctx.drawImage(bloomCanvas, 0, 0, state.w, state.h);
           ctx.restore();
 
-          rafId = requestAnimationFrame(step);
+          if (!STILL_FRAME) requestAnimationFrame(step);
         }
 
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, 1, 1);
-        rafId = requestAnimationFrame(step);
+        requestAnimationFrame(step);
       })();
     </script>
   </body>
